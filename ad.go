@@ -25,9 +25,9 @@ type ADClient struct {
 }
 
 func (lc *ADClient) Connect() error {
-	isClosing:= true
+	isClosing := true
 	if lc.Conn != nil {
-		isClosing=lc.Conn.IsClosing()
+		isClosing = lc.Conn.IsClosing()
 	}
 	if lc.Conn == nil || isClosing {
 		var l *ldap.Conn
@@ -80,7 +80,10 @@ func (lc *ADClient) Bind() error {
 	}
 	return nil
 }
-func (lc *ADClient) GetAllUsers(BaseDN string) ([]map[string]string, error) {
+func (lc *ADClient) GetAllUsersWithFilter(BaseDN string, filter string) ([]map[string]string, error) {
+	if filter == "" {
+		filter = fmt.Sprintf("(&(|(objectClass=user)(objectClass=person))(!(userAccountControl:1.2.840.113556.1.4.803:=2))(!(objectClass=computer))(!(objectClass=group)))")
+	}
 	err := lc.Connect()
 	if err != nil {
 		return nil, err
@@ -92,7 +95,38 @@ func (lc *ADClient) GetAllUsers(BaseDN string) ([]map[string]string, error) {
 	searchRequest := ldap.NewSearchRequest(
 		BaseDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		fmt.Sprintf("(&(|(objectClass=user)(objectClass=person))(!(userAccountControl:1.2.840.113556.1.4.803:=2))(!(objectClass=computer))(!(objectClass=group)))"),
+		filter,
+		lc.Attributes,
+		nil,
+	)
+	sr, err := lc.Conn.Search(searchRequest)
+	if err != nil {
+		return nil, err
+	}
+	users := make([]map[string]string, 0)
+	for _, entry := range sr.Entries {
+		user := make(map[string]string)
+		for _, attr := range entry.Attributes {
+			user[attr.Name] = attr.Values[0]
+		}
+		users = append(users, user)
+	}
+	return users, nil
+}
+func (lc *ADClient) GetAllUsers(BaseDN string) ([]map[string]string, error) {
+	filter := fmt.Sprintf("(&(|(objectClass=user)(objectClass=person))(!(userAccountControl:1.2.840.113556.1.4.803:=2))(!(objectClass=computer))(!(objectClass=group)))")
+	err := lc.Connect()
+	if err != nil {
+		return nil, err
+	}
+	err = lc.Bind()
+	if err != nil {
+		return nil, err
+	}
+	searchRequest := ldap.NewSearchRequest(
+		BaseDN,
+		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
+		filter,
 		lc.Attributes,
 		nil,
 	)
@@ -120,7 +154,7 @@ func (lc *ADClient) GetUserInfo(username string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-//	attributes := append(lc.Attributes, "dn")
+	//	attributes := append(lc.Attributes, "dn")
 	searchRequest := ldap.NewSearchRequest(
 		lc.Base,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
@@ -131,14 +165,14 @@ func (lc *ADClient) GetUserInfo(username string) (map[string]string, error) {
 
 	sr, err := lc.Conn.Search(searchRequest)
 	if err != nil {
-		return  nil, err
+		return nil, err
 	}
 	if len(sr.Entries) < 1 {
-		return  nil, errors.New("User does not exist")
+		return nil, errors.New("User does not exist")
 	}
 
 	if len(sr.Entries) > 1 {
-		return  nil, errors.New("Too many entries returned")
+		return nil, errors.New("Too many entries returned")
 	}
 	user := map[string]string{}
 	for _, attr := range lc.Attributes {
