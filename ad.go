@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/go-ldap/ldap/v3"
+	"strings"
 )
 
 type ADClient struct {
@@ -23,6 +24,11 @@ type ADClient struct {
 	SkipTLS            bool
 	ClientCertificates []tls.Certificate // Adding client certificates
 }
+
+var arrayAttributes = map[string]bool{
+	"memberOf":       true,
+	"url":            true,
+	"otherTelephone": true}
 
 func (lc *ADClient) Connect() error {
 	isClosing := true
@@ -113,8 +119,8 @@ func (lc *ADClient) GetAllUsersWithFilter(BaseDN string, filter string) ([]map[s
 	}
 	return users, nil
 }
-func (lc *ADClient) GetAllUsers(BaseDN string) ([]map[string]string, error) {
-	filter := fmt.Sprintf("(&(|(objectClass=user)(objectClass=person))(!(userAccountControl:1.2.840.113556.1.4.803:=2))(!(objectClass=computer))(!(objectClass=group)))")
+func (lc *ADClient) GetAllUsers() ([]map[string]interface{}, error) {
+	//	filter := fmt.Sprintf("(&(|(objectClass=user)(objectClass=person))(!(userAccountControl:1.2.840.113556.1.4.803:=2))(!(objectClass=computer))(!(objectClass=group)))")
 	err := lc.Connect()
 	if err != nil {
 		return nil, err
@@ -124,7 +130,60 @@ func (lc *ADClient) GetAllUsers(BaseDN string) ([]map[string]string, error) {
 		return nil, err
 	}
 	searchRequest := ldap.NewSearchRequest(
-		BaseDN,
+		lc.Base,
+		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
+		lc.UserFilter,
+		lc.Attributes,
+		nil,
+	)
+
+	sr, err := lc.Conn.Search(searchRequest)
+	if err != nil {
+		return nil, err
+	}
+	users := make([]map[string]interface{}, 0)
+	for _, entry := range sr.Entries {
+		user := make(map[string]interface{})
+		for _, attr := range entry.Attributes {
+			if arrayAttributes[attr.Name] {
+				if attr.Name == "memberOf" {
+					user[attr.Name] = firstMembersOfCommaStrings(attr.Values)
+				} else {
+					user[attr.Name] = attr.Values
+				}
+			} else {
+				user[attr.Name] = attr.Values[0]
+			}
+		}
+		users = append(users, user)
+	}
+	return users, nil
+}
+func firstMembersOfCommaStrings(commaStrings []string) []string {
+	var str []string
+	output := make([]string, 0)
+	for _, commaString := range commaStrings {
+		str = strings.Split(commaString, ",")
+		if len(str) > 0 {
+			output = append(output, str[0][3:])
+		} else {
+			output = append(output, commaString)
+		}
+	}
+	return output
+}
+func (lc *ADClient) GetGroupUsers(group string) ([]map[string]interface{}, error) {
+	filter := fmt.Sprintf("(&(&(&(objectClass=user)(objectCategory=person)((memberof=%s))(!(userAccountControl:1.2.840.113556.1.4.803:=2)))))", group)
+	err := lc.Connect()
+	if err != nil {
+		return nil, err
+	}
+	err = lc.Bind()
+	if err != nil {
+		return nil, err
+	}
+	searchRequest := ldap.NewSearchRequest(
+		lc.Base,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
 		filter,
 		lc.Attributes,
@@ -134,18 +193,22 @@ func (lc *ADClient) GetAllUsers(BaseDN string) ([]map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	users := make([]map[string]string, 0)
+	users := make([]map[string]interface{}, 0)
 	for _, entry := range sr.Entries {
-		user := make(map[string]string)
+		user := make(map[string]interface{})
 		for _, attr := range entry.Attributes {
-			user[attr.Name] = attr.Values[0]
+			if arrayAttributes[attr.Name] {
+				user[attr.Name] = attr.Values
+			} else {
+				user[attr.Name] = attr.Values[0]
+			}
 		}
 		users = append(users, user)
 	}
 	return users, nil
 }
 
-func (lc *ADClient) GetUserInfo(username string) (map[string]string, error) {
+func (lc *ADClient) GetUserInfo(username string) (map[string]interface{}, error) {
 	err := lc.Connect()
 	if err != nil {
 		return nil, err
@@ -158,7 +221,7 @@ func (lc *ADClient) GetUserInfo(username string) (map[string]string, error) {
 	searchRequest := ldap.NewSearchRequest(
 		lc.Base,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		fmt.Sprintf(lc.UserFilter, username),
+		fmt.Sprintf("(userPrincipalName=%s)", username),
 		lc.Attributes,
 		nil,
 	)
@@ -174,9 +237,22 @@ func (lc *ADClient) GetUserInfo(username string) (map[string]string, error) {
 	if len(sr.Entries) > 1 {
 		return nil, errors.New("Too many entries returned")
 	}
-	user := map[string]string{}
-	for _, attr := range lc.Attributes {
-		user[attr] = sr.Entries[0].GetAttributeValue(attr)
+	user := make(map[string]interface{})
+	//for _, attr := range lc.Attributes {
+	//	user[attr] = sr.Entries[0].GetAttributeValue(attr)
+	//}
+	for _, entry := range sr.Entries {
+		for _, attr := range entry.Attributes {
+			if arrayAttributes[attr.Name] {
+				if attr.Name == "memberOf" {
+					user[attr.Name] = firstMembersOfCommaStrings(attr.Values)
+				} else {
+					user[attr.Name] = attr.Values
+				}
+			} else {
+				user[attr.Name] = attr.Values[0]
+			}
+		}
 	}
 	return user, nil
 }
@@ -193,12 +269,10 @@ func (lc *ADClient) Authenticate(username, password string) (bool, map[string]st
 			return false, nil, err
 		}
 	}
-
-	// Search for the given username
 	searchRequest := ldap.NewSearchRequest(
 		lc.Base,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		fmt.Sprintf(lc.UserFilter, username),
+		fmt.Sprintf("(userPrincipalName=%s)", username),
 		lc.Attributes,
 		nil,
 	)
