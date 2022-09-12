@@ -173,7 +173,7 @@ func firstMembersOfCommaStrings(commaStrings []string) []string {
 	return output
 }
 func (lc *ADClient) GetGroupUsers(group string) ([]map[string]interface{}, error) {
-	filter := fmt.Sprintf("(&(&(&(objectClass=user)(objectCategory=person)((memberof=%s))(!(userAccountControl:1.2.840.113556.1.4.803:=2)))))", group)
+	filter := fmt.Sprintf(lc.GroupFilter, group)
 	err := lc.Connect()
 	if err != nil {
 		return nil, err
