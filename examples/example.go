@@ -3,8 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/saygik/go-ad-client"
 	"log"
+
+	adClient "github.com/saygik/go-ad-client"
 )
 
 func main() {
@@ -17,14 +18,12 @@ func main() {
 		BindPassword: "read-only-admin",
 		UserFilter:   "(userPrincipalName=%s)",
 		GroupFilter:  "(memberUid=%s)",
-		Attributes:   []string{"userPrincipalName", "dn", "cn", "company", "department", "title", "telephoneNumber",
+		Attributes: []string{"userPrincipalName", "dn", "cn", "company", "department", "title", "telephoneNumber",
 			"otherTelephone", "mobile", "mail", "pager", "msRTCSIP-PrimaryUserAddress", "url"},
 	}
 	defer client.Close()
 
-
-
-	users, err := client.GetAllUsers("DC=dc,DC=local")
+	users, err := client.GetAllUsers()
 	if err != nil {
 		log.Fatalf("Error get user info user %s: %+v", "username", err)
 	}
