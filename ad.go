@@ -4,8 +4,9 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/go-ldap/ldap/v3"
 	"strings"
+
+	"github.com/go-ldap/ldap/v3"
 )
 
 type ADClient struct {
@@ -28,6 +29,7 @@ type ADClient struct {
 var arrayAttributes = map[string]bool{
 	"memberOf":       true,
 	"url":            true,
+	"proxyAddresses": true,
 	"otherTelephone": true}
 
 func (lc *ADClient) Connect() error {
