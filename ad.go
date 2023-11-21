@@ -161,6 +161,48 @@ func (lc *ADClient) GetAllUsers() ([]map[string]interface{}, error) {
 	}
 	return users, nil
 }
+func (lc *ADClient) GetAllComputers() ([]map[string]interface{}, error) {
+	filter := fmt.Sprintf("(&(objectCategory=computer)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))")
+	attr := []string{"name", "objectSid", "cn", "operatingSystem", "operatingSystemVersion", "primaryGroupID", "servicePrincipalName",
+		"distinguishedName", "userAccountControl", "lastLogon"}
+	err := lc.Connect()
+	if err != nil {
+		return nil, err
+	}
+	err = lc.Bind()
+	if err != nil {
+		return nil, err
+	}
+	searchRequest := ldap.NewSearchRequest(
+		lc.Base,
+		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
+		filter,
+		attr,
+		nil,
+	)
+
+	sr, err := lc.Conn.Search(searchRequest)
+	if err != nil {
+		return nil, err
+	}
+	users := make([]map[string]interface{}, 0)
+	for _, entry := range sr.Entries {
+		user := make(map[string]interface{})
+		for _, attr := range entry.Attributes {
+			if arrayAttributes[attr.Name] {
+				if attr.Name == "memberOf" {
+					user[attr.Name] = firstMembersOfCommaStrings(attr.Values)
+				} else {
+					user[attr.Name] = attr.Values
+				}
+			} else {
+				user[attr.Name] = attr.Values[0]
+			}
+		}
+		users = append(users, user)
+	}
+	return users, nil
+}
 func firstMembersOfCommaStrings(commaStrings []string) []string {
 	var str []string
 	output := make([]string, 0)
