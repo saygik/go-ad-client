@@ -4,13 +4,17 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-ldap/ldap/v3"
 )
 
 type ADClient struct {
 	Attributes         []string
+	Domain             string
 	Base               string
 	BindDN             string
 	BindPassword       string
@@ -18,6 +22,7 @@ type ADClient struct {
 	Host               string
 	ServerName         string
 	UserFilter         string // e.g. "(userPrincipalName=%s)"
+	ComputerFilter     string // e.g. "(&(objectCategory=computer)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))"
 	Conn               *ldap.Conn
 	Port               int
 	InsecureSkipVerify bool
@@ -27,10 +32,11 @@ type ADClient struct {
 }
 
 var arrayAttributes = map[string]bool{
-	"memberOf":       true,
-	"url":            true,
-	"proxyAddresses": true,
-	"otherTelephone": true}
+	"memberOf":             true,
+	"url":                  true,
+	"proxyAddresses":       true,
+	"servicePrincipalName": true,
+	"otherTelephone":       true}
 
 func (lc *ADClient) Connect() error {
 	isClosing := true
@@ -162,9 +168,9 @@ func (lc *ADClient) GetAllUsers() ([]map[string]interface{}, error) {
 	return users, nil
 }
 func (lc *ADClient) GetAllComputers() ([]map[string]interface{}, error) {
-	filter := fmt.Sprintf("(&(objectCategory=computer)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))")
-	attr := []string{"name", "objectSid", "cn", "operatingSystem", "operatingSystemVersion", "primaryGroupID", "servicePrincipalName",
-		"distinguishedName", "userAccountControl", "lastLogon"}
+	//	filter := "(&(objectCategory=computer)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))"
+	attr := []string{"name", "description", "cn", "operatingSystem", "operatingSystemVersion", "primaryGroupID", "servicePrincipalName",
+		"distinguishedName", "userAccountControl", "lastLogonTimestamp", "extensionAttribute10"}
 	err := lc.Connect()
 	if err != nil {
 		return nil, err
@@ -176,7 +182,7 @@ func (lc *ADClient) GetAllComputers() ([]map[string]interface{}, error) {
 	searchRequest := ldap.NewSearchRequest(
 		lc.Base,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		filter,
+		lc.ComputerFilter,
 		attr,
 		nil,
 	)
@@ -186,22 +192,57 @@ func (lc *ADClient) GetAllComputers() ([]map[string]interface{}, error) {
 		return nil, err
 	}
 	users := make([]map[string]interface{}, 0)
-	for _, entry := range sr.Entries {
+	for index, entry := range sr.Entries {
 		user := make(map[string]interface{})
 		for _, attr := range entry.Attributes {
 			if arrayAttributes[attr.Name] {
-				if attr.Name == "memberOf" {
-					user[attr.Name] = firstMembersOfCommaStrings(attr.Values)
-				} else {
+				if attr.Name == "servicePrincipalName" {
+					user[attr.Name] = strings.Join(attr.Values, ",")
+				}
+				if attr.Name != "servicePrincipalName" {
 					user[attr.Name] = attr.Values
 				}
 			} else {
 				user[attr.Name] = attr.Values[0]
 			}
 		}
+		if user["extensionAttribute10"] == "virtual" {
+			user["virtual"] = true
+		} else {
+			user["virtual"] = false
+		}
+		stime := ""
+		unixTimeStampString, ok := user["lastLogonTimestamp"].(string)
+		if ok {
+			unixTimeStamp, err := strconv.ParseInt(unixTimeStampString, 10, 64)
+			if err == nil {
+				unixTimeUTC := getTime(unixTimeStamp)
+				//unixTimeUTC := time.Unix(unixTimeStamp, 0) //gives unix time stamp in utc
+				stime = unixTimeUTC.Format(time.RFC3339)
+			}
+		}
+		if len(stime) > 0 {
+			user["lastLogonTime"] = stime
+		}
+		user["id"] = fmt.Sprintf("%s-%d", lc.Domain, index)
+		user["domain"] = lc.Domain
+		ouArr := strings.Split(user["distinguishedName"].(string), ",")
+		user["ou"] = strings.Join(trimOU(reverseAndTrimFirst(ouArr[1:len(ouArr)-2])), " > ")
 		users = append(users, user)
 	}
 	return users, nil
+}
+func reverseAndTrimFirst(s []string) []string {
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
+	}
+	return s
+}
+func trimOU(s []string) []string {
+	for i := 0; i < len(s); i++ {
+		s[i] = s[i][3:]
+	}
+	return s
 }
 func firstMembersOfCommaStrings(commaStrings []string) []string {
 	var str []string
@@ -355,4 +396,19 @@ func (lc *ADClient) Authenticate(username, password string) (bool, map[string]st
 	}
 
 	return true, user, nil
+}
+
+func getTime(input int64) time.Time {
+	maxd := time.Duration(math.MaxInt64).Truncate(100 * time.Nanosecond)
+	maxdUnits := int64(maxd / 100) // number of 100-ns units
+
+	t := time.Date(1601, 1, 1, 0, 0, 0, 0, time.UTC)
+	for input > maxdUnits {
+		t = t.Add(maxd)
+		input -= maxdUnits
+	}
+	if input != 0 {
+		t = t.Add(time.Duration(input * 100))
+	}
+	return t
 }
