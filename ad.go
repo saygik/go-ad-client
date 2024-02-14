@@ -14,6 +14,7 @@ import (
 
 type ADClient struct {
 	Attributes         []string
+	Title              string
 	Domain             string
 	Base               string
 	BindDN             string
