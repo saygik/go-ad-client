@@ -146,10 +146,13 @@ func (lc *ADClient) GetAllUsers() ([]map[string]interface{}, error) {
 		nil,
 	)
 
-	sr, err := lc.Conn.Search(searchRequest)
-	if err != nil {
-		return nil, err
+	sr, _ := lc.Conn.Search(searchRequest)
+	if len(sr.Entries) == 0 {
+		return nil, errors.New("no entries found")
 	}
+	// if err != nil {
+	// 	return nil, err
+	// }
 	users := make([]map[string]interface{}, 0)
 	for _, entry := range sr.Entries {
 		user := make(map[string]interface{})
